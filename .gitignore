@@ -3,14 +3,31 @@
 # Python cache files
 *.pyc
 *.pyo
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
 
-# Environment folders
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment folders and secrets
 venv/
 .env/
+.env
+.env.*
+!.env.example
 
 # System files
 .DS_Store
 Thumbs.db
+
+# IDE / tooling (optional local settings)
+.idea/
+.vscode/
 
 # data/wandb/experiment files
 wandb/
@@ -19,6 +36,29 @@ wandb/
 **/features/
 **/indices/
 **/splits/
-**/scripts/
 **/data_files/
 **/**/results/
+
+# Local datasets and large downloads (do not commit)
+/data/
+
+# MultiBench run outputs
+/MultiBench/exp/
+
+# Model checkpoints and large binaries (adjust if you need to version small files)
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+*.h5
+*.hdf5
+*.npz
+
+# Caches used by ML frameworks
+.cache/
+.huggingface/
+torch_hub/
+
+# Note: Removed overly broad `**/scripts/` — use a project-specific path if needed.

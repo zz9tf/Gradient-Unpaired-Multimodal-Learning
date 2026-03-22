@@ -70,7 +70,7 @@ class UML(torch.nn.Module):
     def zero_shot_init(self, zeroshot_dataset):
         print("=> Initializing head with zero-shot weights")
         self.head.weight.data = get_zero_shot_weights(zeroshot_dataset, self.num_classes, self.shared_dim)
- 
+
 
 class UMLClip(torch.nn.Module):
     def __init__(self, 

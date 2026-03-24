@@ -79,6 +79,22 @@ def train(model, image_loader, text_loader, val_loader, test_loader, optimizer, 
     text_iter = iter(text_loader) if text_loader is not None else None
     no_improve = 0
 
+    # ---- Print: steps/epoch (next epoch total steps) ----
+    # This training loop is max-iters-based; interpret one "epoch" as one full pass over each dataloader.
+    len_image = None
+    try:
+        if image_loader is not None:
+            len_image = len(image_loader)
+    except Exception:
+        len_image = None
+
+    len_text = None
+    try:
+        if text_loader is not None:
+            len_text = len(text_loader)
+    except Exception:
+        len_text = None
+
     img_alpha = 1.0
     for i in range(max_iters):
         labels, modality_flags = [], []
@@ -114,6 +130,25 @@ def train(model, image_loader, text_loader, val_loader, test_loader, optimizer, 
         text_acc = (torch.argmax(text_logits, dim=1) == labels[text_indices]).float().mean().item() if text_indices.any() else 0.0
 
         if i % eval_freq == 0:
+            # ---- Print current-batch/iter view of "next epoch" ----
+            msg = f"[vision_language] iter={int(i)}"
+            if len_image is not None and len_image > 0:
+                img_part = int(i) % int(len_image)
+                steps_until_next_img_epoch_start = int(len_image) - img_part - 1
+                msg += f" | next_epoch_total_steps(img)={int(len_image)}"
+                msg += f" | steps_until_next_epoch_start(img)={int(steps_until_next_img_epoch_start)}"
+            else:
+                msg += " | next_epoch_total_steps(img)=unknown"
+
+            if len_text is not None and len_text > 0:
+                txt_part = int(i) % int(len_text)
+                steps_until_next_txt_epoch_start = int(len_text) - txt_part - 1
+                msg += f" | next_epoch_total_steps(text)={int(len_text)}"
+                msg += f" | steps_until_next_epoch_start(text)={int(steps_until_next_txt_epoch_start)}"
+            else:
+                msg += " | next_epoch_total_steps(text)=unknown"
+            print(msg)
+
             val_loss, val_acc = validate(model, val_loader, device=device)
             testlog = ''
             if test_loader is not None:
@@ -181,6 +216,39 @@ def setup(datasets, hparams, args):
     if args.classifier_init == 'zeroshot' and args.modality == 'crossmodal':
         model.zero_shot_init(datasets['text_ds'])
     model.to(device)
+
+    # ---- Print: model blocks ----
+    # For CLIP, "blocks" typically refer to transformer residual blocks.
+    residual_attn_blocks = sum(1 for m in model.modules() if m.__class__.__name__ == "ResidualAttentionBlock")
+    bottleneck_blocks = sum(1 for m in model.modules() if m.__class__.__name__ == "Bottleneck")
+    print(
+        f"[vision_language] model_num_blocks(ResidualAttentionBlock)={residual_attn_blocks} "
+        f"| model_num_blocks(Bottleneck)={bottleneck_blocks}"
+    )
+
+    # If underlying vision backbone is CLIP, print more granular counts when possible.
+    try:
+        if args.use_clip and hasattr(model, "vision_model"):
+            clip_model = model.vision_model
+            text_blocks = None
+            if hasattr(clip_model, "transformer") and hasattr(clip_model.transformer, "resblocks"):
+                text_blocks = len(clip_model.transformer.resblocks)
+
+            vision_blocks = None
+            visual = getattr(clip_model, "visual", None)
+            if visual is not None:
+                if hasattr(visual, "transformer") and hasattr(visual.transformer, "resblocks"):
+                    vision_blocks = len(visual.transformer.resblocks)
+                elif hasattr(visual, "layer1") and hasattr(visual, "layer2") and hasattr(visual, "layer3") and hasattr(visual, "layer4"):
+                    vision_blocks = len(visual.layer1) + len(visual.layer2) + len(visual.layer3) + len(visual.layer4)
+
+            print(
+                f"[vision_language] clip_blocks(text_resblocks={text_blocks if text_blocks is not None else 'unknown'} "
+                f"| vision_blocks={vision_blocks if vision_blocks is not None else 'unknown'})"
+            )
+    except Exception:
+        # Best-effort introspection; do not hide training.
+        pass
 
     optimizer = build_optimizer(model.parameters(), hparams['optim'], hparams['lr'], hparams['weight_decay'])
     scheduler = build_lr_scheduler(optimizer, hparams['lr_scheduler'], hparams['warmup_iter'], hparams['max_iter'], warmup_type=hparams['warmup_type'], warmup_lr=hparams['warmup_min_lr'])

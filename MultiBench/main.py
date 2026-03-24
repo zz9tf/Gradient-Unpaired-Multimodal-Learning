@@ -1,5 +1,18 @@
+import argparse
+import json
 import os
+import shutil
 import sys
+from datetime import datetime
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+_MULTIBENCH_DIR = os.path.dirname(os.path.abspath(__file__))
+if _MULTIBENCH_DIR not in sys.path:
+    sys.path.insert(0, _MULTIBENCH_DIR)
+
 from models import Transformer, Linear
 from train import UML, train, set_seed
 from torch import optim
@@ -9,16 +22,91 @@ import yaml
 from itertools import product
 import random
 import numpy as np
-import argparse
-import sys
-import os
-from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 import wandb
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import subprocess
+from gradient_wrapper.grad_wrapper import GradWrapper, default_monitor_block_fn, build_common_slices
+from gradient_wrapper.grad_block_monitor import GradientMonitor, MonitorConfig
+from gradient_wrapper.grad_gpop import CommonGpopConfig, CommonGpopEditor
+from utils.checkpoint import save_multibench_checkpoint
+from utils.train_weight_pack import build_train_weight_pack
 
+
+def print_train_block_overview(
+    model: torch.nn.Module,
+    train_loader_1,
+    train_loader_2,
+) -> None:
+    """
+    Print model block ids for monitor/gpop debugging before training starts.
+
+    Args:
+        model: UML model.
+        train_loader_1: Loader for branch-1 batches.
+        train_loader_2: Loader for branch-2 batches.
+    """
+    trainable_named = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+
+    block_ids_default_all = sorted({default_monitor_block_fn(n) for n, _ in trainable_named})
+    block_ids_default_shared = sorted(
+        {default_monitor_block_fn(n) for n, _ in trainable_named if uml_encoder_common_param_filter(n)}
+    )
+
+    layer_block_ids = set()
+    for n, p in trainable_named:
+        if not uml_encoder_common_param_filter(n):
+            continue
+        if ".layers." not in n:
+            continue
+        try:
+            left, right = n.split(".layers.", 1)
+            idx = right.split(".", 1)[0]
+            layer_block_ids.add(f"{left}.layers.{idx}")
+        except Exception:
+            pass
+    layer_block_ids = sorted(layer_block_ids)
+    num_model_blocks = len(layer_block_ids)
+
+    print(
+        f"[MultiBench] steps_per_epoch={len(train_loader_1)} | {len(train_loader_2)}"
+        f" | model_num_blocks(shared_encoder)= {num_model_blocks}"
+        f"\n[MultiBench] block_ids_default_all(len={len(block_ids_default_all)})={block_ids_default_all}"
+        f"\n[MultiBench] block_ids_default_shared(len={len(block_ids_default_shared)})={block_ids_default_shared}"
+        f"\n[MultiBench] layer_block_ids_shared_encoder(len={len(layer_block_ids)})={layer_block_ids}"
+    )
+
+
+def write_run_config_json(results_dir: str, args: argparse.Namespace) -> str:
+    """
+    Persist parsed CLI config plus command line for reproducibility.
+
+    Args:
+        results_dir: Experiment output directory.
+        args: Parsed namespace from this file's ``ArgumentParser``.
+
+    Returns:
+        Absolute path to the written ``config.json``.
+    """
+    os.makedirs(results_dir, exist_ok=True)
+    path = os.path.join(results_dir, "config.json")
+    payload = vars(args)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+        f.write("\n")
+    return path
+
+def uml_encoder_common_param_filter(name: str) -> bool:
+    """
+    Select shared Transformer encoder parameters in UML for gpop common-parameter mask.
+
+    Args:
+        name: Parameter name from named_parameters().
+
+    Returns:
+        True if this parameter belongs to the shared encoder submodule.
+    """
+    n = name[7:] if name.startswith("module.") else name
+    return n.startswith("encoder.")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--modality', type=str, default='x')
@@ -28,21 +116,43 @@ parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--n_seeds', type=int, default=1)
 parser.add_argument('--ds_name', type=str, default='mosi')
 parser.add_argument('--step_k', type=int, default=-1)
-parser.add_argument('--augment', action='store_true')
 parser.add_argument('--pos_embd', action='store_true')
 parser.add_argument('--pos_learnable', action='store_true')
-parser.add_argument('--debug', action='store_true')
 parser.add_argument('--run_name', type=str, default='')
 parser.add_argument('--results_dir', type=str, default='./results')
 parser.add_argument('--log_dir', type=str, default='./logs')
+parser.add_argument('--train_jsonl', action='store_true', help='Write view_log-compatible train.jsonl under results_dir')
 
+parser.add_argument('--debug', action='store_true', help='Skip wandb and use verbose-free paths where applicable')
+
+parser.add_argument('--gpop_monitor', action='store_true', help='Enable pre/post GradientMonitor (for view_log block plots)')
+parser.add_argument('--gpop_monitor_beta', type=float, default=0.999, help='Gpop beta for GradientMonitor')
+parser.add_argument('--gpop_monitor_relation_tau', type=float, default=1e-8, help='Relation tau for GradientMonitor')
+parser.add_argument('--gpop_monitor_enable_common_block', action='store_true', help='Enable common block for GradientMonitor')
+
+parser.add_argument('--gpop', action='store_true', help='Enable gpop on shared encoder')
+parser.add_argument('--gpop_ref_build_kind', type=str, default='cov', help='Operator kind for gpop')
+parser.add_argument('--gpop_unbiased', action='store_true', help='Unbiased gpop')
+parser.add_argument('--gpop_cov_center', action='store_true', help='Covariance center gpop')
+parser.add_argument('--gpop_damping', type=float, default=1e-3, help='Damping for gpop')
+parser.add_argument('--gpop_cg_max_iter', type=int, default=30, help='CG max iter for gpop')
+parser.add_argument('--gpop_cg_tol', type=float, default=1e-6, help='CG tol for gpop')
+parser.add_argument('--gpop_ema_beta', type=float, default=0.999, help='EMA beta for gpop')
+parser.add_argument('--gpop_eps', type=float, default=1e-8, help='Epsilon for gpop')
+parser.add_argument('--gpop_edit_kind', type=str, default='project', help='Edit kind for batch gradient on common dims')
+parser.add_argument('--gpop_weights', type=str, default="loss_x=1.0,loss_y=1.0", help='Weights for gpop, e.g. "loss_x=1.0,loss_y=1.0"')
+
+parser.add_argument('--show_layers', action='store_true', help='Print model.named_modules() and pause for manual inspection')
+parser.add_argument('--augment', action='store_true', help='Compatibility flag; currently unused')
 
 
 def main(args):
     log_dir = args.log_dir
     fname = f"log_{args.run_name}{args.ds_name}_mod{args.modality}_zdim{args.zdim}_epochs{args.num_epochs}_pos_embd_{args.pos_embd}_learnable_{args.pos_learnable}_step_k{args.step_k}_n_seeds{args.n_seeds}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     results_dir = os.path.join(args.results_dir, fname)
-    
+    cfg_path = write_run_config_json(results_dir, args)
+    print(f"[MultiBench] Wrote run config JSON to {cfg_path}")
+
     if not args.debug:  
         os.makedirs(log_dir, exist_ok=True)
         os.environ["WANDB_DIR"] = log_dir + "/wandb"
@@ -55,6 +165,9 @@ def main(args):
     seeds = [i for i in range(args.n_seeds)]
     outs = {'score_x': [], 'score_y': [], 'score_xy': [], 'val_score_x': [], 'val_score_y': [], 'val_score_xy': []}
     for seed in seeds:
+        seed_dir = os.path.join(results_dir, f"seed_{seed}")
+        os.makedirs(seed_dir, exist_ok=True)
+        print(f"[MultiBench] Seed {seed} outputs -> {seed_dir}")
         set_seed(seed)
         if args.ds_name == 'mosi':
             batch_size=32
@@ -100,9 +213,9 @@ def main(args):
         # Dataset stats
         print("Dataset: ", args.ds_name)
         print("Batch size: ", batch_size)
-        print("Train dataset: ", len(train_loader)*batch_size)
-        print("Eval train dataset: ", len(eval_train_loader)*batch_size)
-        print("Eval test dataset: ", len(eval_test_loader)*batch_size)
+        print("Train dataset: ", len(train_loader))
+        print("Eval train dataset: ", len(eval_train_loader))
+        print("Eval test dataset: ", len(eval_test_loader))
         print(f"Modality Info: xdim: {indims[0]}, ydim: {indims[1]}, zdim: {args.zdim}")
 
 
@@ -112,16 +225,127 @@ def main(args):
         shared_encoder = Transformer(args.zdim, args.zdim, nhead=5, num_layers=5, conv1d=True, out_last=False, pos_embd=args.pos_embd, pos_learnable=args.pos_learnable, max_len=128)
         decoders = [Linear(args.zdim, indims[0]), Linear(args.zdim, indims[1])]
         model = UML(xproj_in, yproj_in, shared_encoder, decoders, modality=args.modality).cuda()
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        # TODO: Add Adam optimizer
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+        print_train_block_overview(model, train_loader, train_loader_2)
 
-        # Train model
-        score = train(model, args.modality,train_loader, train_loader_2,optimizer, 
-                        num_epoch=args.num_epochs, step_k=args.step_k,ds_name=args.ds_name,
-                        eval_config={'train': eval_train_loader, 'val': eval_valid_loader, 'test': eval_test_loader, 'freq': 100},
-                        augment=args.augment, debug=args.debug)
+        if bool(args.show_layers):
+            for name, module in model.named_modules():
+                print(name, "->", module.__class__.__name__)
+            print("--------------------------------")
+            input()
+        else:
+            print("\n[Available module names for --show_layers]")
 
-        print('seed: ', seed, ' score: ', score)
+        train_weight_pack = build_train_weight_pack(args.gpop_weights, args.modality)
+        print("[MultiBench] train_weight_pack (CPU):", train_weight_pack)
+
+        grad_wrapper = None
+        enable_grad_wrapper = bool(args.gpop or args.gpop_monitor)
+        if enable_grad_wrapper:
+            trainable_named = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+            common_slices = build_common_slices(trainable_named, uml_encoder_common_param_filter)
+            loss_schema = ["loss_x", "loss_y"]
+
+            block_ids_default_all = sorted({default_monitor_block_fn(n) for n, _ in trainable_named})
+            block_loss_keys = {bid: list(loss_schema) for bid in block_ids_default_all}
+            block_loss_keys["__common__"] = list(loss_schema)
+
+            mon_cfg_pre = MonitorConfig(
+                prefix="grad_pre",
+                gpop_beta=float(args.gpop_monitor_beta),
+                relation_tau=float(args.gpop_monitor_relation_tau),
+                enable_common_block=bool(args.gpop_monitor_enable_common_block),
+            )
+            mon_cfg_post = MonitorConfig(
+                prefix="grad_post",
+                gpop_beta=float(args.gpop_monitor_beta),
+                relation_tau=float(args.gpop_monitor_relation_tau),
+                enable_common_block=bool(args.gpop_monitor_enable_common_block),
+            )
+
+            monitor_pre = None
+            monitor_post = None
+            if bool(args.gpop_monitor):
+                monitor_pre = GradientMonitor(
+                    named_params=trainable_named,
+                    block_split_fn=default_monitor_block_fn,
+                    block_loss_keys=block_loss_keys,
+                    cfg=mon_cfg_pre,
+                    common_slices=common_slices,
+                )
+                monitor_post = GradientMonitor(
+                    named_params=trainable_named,
+                    block_split_fn=default_monitor_block_fn,
+                    block_loss_keys=block_loss_keys,
+                    cfg=mon_cfg_post,
+                    common_slices=common_slices,
+                )
+
+            gpop_editor = None
+            if bool(args.gpop):
+                gpop_editor = CommonGpopEditor(
+                    named_params=trainable_named,
+                    common_param_filter=uml_encoder_common_param_filter,
+                    cfg=CommonGpopConfig(
+                        gpop_keys=list(loss_schema),
+                        ref_build_kind=str(args.gpop_ref_build_kind),
+                        unbiased=bool(args.gpop_unbiased),
+                        cov_center=bool(args.gpop_cov_center),
+                        damping=float(args.gpop_damping),
+                        cg_max_iter=int(args.gpop_cg_max_iter),
+                        cg_tol=float(args.gpop_cg_tol),
+                        ema_beta=float(args.gpop_ema_beta),
+                        eps=float(args.gpop_eps),
+                        edit_kind=str(args.gpop_edit_kind),
+                    ),
+                )
+
+            grad_wrapper = GradWrapper(
+                model=model,
+                monitor_pre=monitor_pre,
+                monitor_post=monitor_post,
+                gpop=gpop_editor,
+                verbose=not bool(args.debug),
+            )
+        jsonl_path = os.path.join(seed_dir, 'train.jsonl') if args.train_jsonl else None
+        loss_jsonl_path = os.path.join(seed_dir, 'loss.jsonl')
+        stats_jsonl_path = os.path.join(seed_dir, 'stats.jsonl')
+        best_model_path = os.path.join(seed_dir, "model_best.pth")
+
+        # Train model (saves best-val checkpoint to best_model_path; final return = test on best ckpt)
+        score = train(
+            model,
+            args.modality,
+            train_loader,
+            train_loader_2,
+            train_weight_pack,
+            optimizer,
+            num_epoch=args.num_epochs,
+            step_k=args.step_k,
+            ds_name=args.ds_name,
+            eval_config={'train': eval_train_loader, 'val': eval_valid_loader, 'test': eval_test_loader, 'freq': 100},
+            augment=args.augment,
+            debug=args.debug,
+            grad_wrapper=grad_wrapper,
+            jsonl_path=jsonl_path,
+            loss_jsonl_path=loss_jsonl_path,
+            stats_jsonl_path=stats_jsonl_path,
+            best_model_path=best_model_path,
+        )
+        latest_model_path = os.path.join(seed_dir, "model_latest.pth")
+        save_multibench_checkpoint(
+            latest_model_path,
+            model,
+            modality=args.modality,
+            ds_name=args.ds_name,
+        )
+        print(f"[MultiBench] Saved latest checkpoint to {latest_model_path}")
+
+        print('seed: ', seed, ' score (best-val checkpoint, test+val metrics): ', score)
         print('=====================================')
+        if score is None:
+            raise RuntimeError("train() returned no scores; eval_config may be missing or empty.")
         outs['score_x'].append(100*score[0])
         outs['score_y'].append(100*score[1])
         outs['score_xy'].append(100*score[2])
@@ -141,25 +365,17 @@ def main(args):
         wandb.log({f'final_{k}': v for k, v in outs_mean.items()})
         wandb.log({f'final_std_{k}': v for k, v in outs_std.items()})
 
-    # save model and log outputs
-    os.makedirs(results_dir, exist_ok=True)
-    print(f"Saving model to {os.path.join(results_dir, 'model.pth')}")
-    torch.save(model.state_dict(), os.path.join(results_dir, "model.pth"))
     with open(os.path.join(results_dir, "outputs.txt"), "w") as f:
-        f.write(f"Final scores: {outs_mean}\n")
+        f.write(f"Test/val metrics from latest model evaluation (see train): {outs_mean}\n")
         f.write(f"Final scores std: {outs_std}\n")
 
 
 if __name__ == "__main__":
     outer_parser = argparse.ArgumentParser(description="MultiBench Experiment")
     outer_parser.add_argument("-c", "--config", type=str, default="config.json", help="Configuration file")
-    outer_parser.add_argument("-s", "--slurm", action="store_true", help="Launched with slurm")
     outer_parser.add_argument("-d", "--outer_debug", action="store_true", help="Debug mode")
-    outer_parser.add_argument("-f", "--flag", action="store_true", help="Run despite existing experiments directory")
     outer_parser.add_argument("-o", "--overwrite", action="store_true", help="Overwrite existing experiments directory")
     outer_args, remaining_args = outer_parser.parse_known_args()
-
-    FLAG = int(outer_args.flag)
 
     if outer_args.outer_debug:
         print("Running command-line arguments...")
@@ -178,16 +394,9 @@ if __name__ == "__main__":
     print("Total combinations:", len(combinations))
     for i, combo in enumerate(combinations):
         print(f"Combination {i}: {combo}")
-    if outer_args.slurm:
-        # args.debug = True
-        job_id = int(os.getenv("SLURM_ARRAY_TASK_ID", "-1"))
-        if job_id < 0 or job_id >= len(combinations):
-            print("Invalid SLURM_ARRAY_TASK_ID")
-            sys.exit(1)
-        combination = combinations[job_id]
-        print(f"=> Running combination {job_id}: {combination}")
+    for i, combination in enumerate(combinations):
+        print(f"=> Running combination {i}: {combination}")
         args = parser.parse_args([], argparse.Namespace(**combination))
         args.overwrite = outer_args.overwrite
         print("=> Parsed arguments:", args)
         main(args)
-

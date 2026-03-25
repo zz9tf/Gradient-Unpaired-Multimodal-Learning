@@ -1,5 +1,6 @@
 import torch
-from dataclasses import dataclass
+from gradient_wrapper.grad_gpop import CommonGpopEditor
+from gradient_wrapper.grad_block_monitor import GradientBlockState
 from typing import Dict, List, Optional, Callable, Tuple, Any
 
 def default_monitor_block_fn(name: str) -> str:
@@ -105,9 +106,9 @@ class GradWrapper:
         self,
         model: torch.nn.Module,
         param_filter: Optional[Callable[[str, torch.nn.Parameter], bool]] = None,
-        monitor_pre: Optional[Any] = None,
-        monitor_post: Optional[Any] = None,
-        gpop: Optional[Any] = None,
+        monitor_pre: Optional[GradientBlockState] = None,
+        monitor_post: Optional[GradientBlockState] = None,
+        gpop: Optional[CommonGpopEditor] = None,
         verbose: bool = True,
     ):
         self.model = model
@@ -131,9 +132,9 @@ class GradWrapper:
 
         if verbose:
             print("[GradWrapper] tensors:", len(self.params), "examples:", self.all_names[:5])
-            print("[GradWrapper] monitor_pre:", type(self.monitor_pre).__name__ if self.monitor_pre is not None else None)
-            print("[GradWrapper] monitor_post:", type(self.monitor_post).__name__ if self.monitor_post is not None else None)
-            print("[GradWrapper] gpop:", type(self.gpop).__name__ if self.gpop is not None else None)
+            print("[GradWrapper] monitor_pre:", self.monitor_pre.name if self.monitor_pre is not None else None)
+            print("[GradWrapper] monitor_post:", self.monitor_post.name if self.monitor_post is not None else None)
+            print("[GradWrapper] gpop:", self.gpop.cfg.gpop_keys if self.gpop is not None else None)
 
     # ----------------------------
     # helpers
@@ -172,22 +173,6 @@ class GradWrapper:
         self._step += 1
         loss_keys = list(losses.keys())
         T = len(loss_keys)
-
-        if task_weights is not None:
-            if task_weights.ndim != 1:
-                raise ValueError(f"task_weights must be 1D, got shape {tuple(task_weights.shape)}")
-            if int(task_weights.shape[0]) != T:
-                raise ValueError(
-                    f"task_weights length ({task_weights.shape[0]}) must match len(losses) ({T})"
-                )
-        if self.gpop is not None and gpop_weights is not None:
-            if gpop_weights.ndim != 1:
-                raise ValueError(f"gpop_weights must be 1D, got shape {tuple(gpop_weights.shape)}")
-            if int(gpop_weights.shape[0]) != len(self.gpop.cfg.gpop_keys):
-                raise ValueError(
-                    f"gpop_weights length ({gpop_weights.shape[0]}) must match len(gpop_keys) ({len(self.gpop.cfg.gpop_keys)})"
-                )
-
         # 1) compute per-loss gradients
         g_list = []
         for i, k in enumerate(loss_keys):

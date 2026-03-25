@@ -344,17 +344,13 @@ def train(
             else:
                 if is_warmup:
                     losses = {"loss_y": loss_y}
-                    task_weights = train_weight_pack.task_weights_cpu[1:]
-                    gpop_weights = train_weight_pack.gpop_schema_weights_cpu[1:]
                 else:
                     losses = {"loss_x": loss_x, "loss_y": loss_y}
-                    task_weights = train_weight_pack.task_weights_cpu
-                    gpop_weights = train_weight_pack.gpop_schema_weights_cpu
 
                 last_stats = grad_wrapper.backward(
                     losses=losses,
-                    task_weights=task_weights,
-                    gpop_weights=gpop_weights,
+                    task_weights=train_weight_pack.task_weights_cpu,
+                    gpop_weights=train_weight_pack.gpop_schema_weights_cpu,
                 )
             optimizer.step()
 

@@ -148,7 +148,12 @@ parser.add_argument('--augment', action='store_true', help='Compatibility flag; 
 
 def main(args):
     log_dir = args.log_dir
-    fname = f"log_{args.run_name}{args.ds_name}_mod{args.modality}_zdim{args.zdim}_epochs{args.num_epochs}_pos_embd_{args.pos_embd}_learnable_{args.pos_learnable}_step_k{args.step_k}_n_seeds{args.n_seeds}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    fname = (
+        f"log_{timestamp}_{args.run_name}{args.ds_name}_mod{args.modality}"
+        f"_zdim{args.zdim}_epochs{args.num_epochs}_pos_embd_{args.pos_embd}"
+        f"_learnable_{args.pos_learnable}_step_k{args.step_k}_n_seeds{args.n_seeds}"
+    )
     results_dir = os.path.join(args.results_dir, fname)
     cfg_path = write_run_config_json(results_dir, args)
     print(f"[MultiBench] Wrote run config JSON to {cfg_path}")
@@ -366,7 +371,7 @@ def main(args):
         wandb.log({f'final_std_{k}': v for k, v in outs_std.items()})
 
     with open(os.path.join(results_dir, "outputs.txt"), "w") as f:
-        f.write(f"Test/val metrics from latest model evaluation (see train): {outs_mean}\n")
+        f.write(f"Final scores (mean): {outs_mean}\n")
         f.write(f"Final scores std: {outs_std}\n")
 
 

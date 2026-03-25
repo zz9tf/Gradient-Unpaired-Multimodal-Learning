@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import re
 import pandas as pd
@@ -41,19 +42,20 @@ def build_df(md_path: Path) -> pd.DataFrame:
 
 
 def make_heatmap(df: pd.DataFrame, outdir: Path):
+    # First dimension is modality (x/xy/y); metric is unified as test_y accuracy.
     row_specs = [
-        ('test_x', 'score_x_mean', False, False),
-        ('test_xy', 'score_xy_mean', False, False),
-        ('test_y', 'score_y_mean', False, False),
-        ('test_x', 'score_x_mean', False, True),
-        ('test_xy', 'score_xy_mean', False, True),
-        ('test_y', 'score_y_mean', False, True),
-        ('test_x', 'score_x_mean', True, False),
-        ('test_xy', 'score_xy_mean', True, False),
-        ('test_y', 'score_y_mean', True, False),
-        ('test_x', 'score_x_mean', True, True),
-        ('test_xy', 'score_xy_mean', True, True),
-        ('test_y', 'score_y_mean', True, True),
+        ("x", "score_y_mean", False, False),
+        ("xy", "score_y_mean", False, False),
+        ("y", "score_y_mean", False, False),
+        ("x", "score_y_mean", False, True),
+        ("xy", "score_y_mean", False, True),
+        ("y", "score_y_mean", False, True),
+        ("x", "score_y_mean", True, False),
+        ("xy", "score_y_mean", True, False),
+        ("y", "score_y_mean", True, False),
+        ("x", "score_y_mean", True, True),
+        ("xy", "score_y_mean", True, True),
+        ("y", "score_y_mean", True, True),
     ]
     zdim_order = sorted(df['zdim'].unique())
     step_order = sorted(df['step_k'].unique(), key=lambda x: (x == -1, x))
@@ -62,13 +64,19 @@ def make_heatmap(df: pd.DataFrame, outdir: Path):
     columns = [(z, k) for z in zdim_order for k in step_order]
     matrix = []
     row_labels = []
-    for metric_name, metric_col, pos, learn in row_specs:
+    for modality, metric_col, pos, learn in row_specs:
         row = []
         for z, k in columns:
-            sub = df[(df['zdim'] == z) & (df['step_k'] == k) & (df['pos_embd'] == pos) & (df['learnable'] == learn)]
+            sub = df[
+                (df['modality'] == modality)
+                & (df['zdim'] == z)
+                & (df['step_k'] == k)
+                & (df['pos_embd'] == pos)
+                & (df['learnable'] == learn)
+            ]
             row.append(float(sub.iloc[0][metric_col]) if len(sub) else float('nan'))
         matrix.append(row)
-        row_labels.append(f'{metric_name} | pos={int(pos)} learn={int(learn)}')
+        row_labels.append(f'{modality} | pos={int(pos)} learn={int(learn)}')
 
     mat_df = pd.DataFrame(matrix, index=row_labels, columns=[f'z{z}\nk={k}' for z, k in columns])
     mat_df.to_csv(outdir / 'combined_test_heatmap_matrix.csv')

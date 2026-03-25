@@ -11,9 +11,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 
-TARGET_DIR = Path("/home/zz/zheng/Unpaired-Multimodal-Learning/data")
 CHUNK_SIZE = 1024 * 1024  # 1 MB
-
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
@@ -24,6 +22,12 @@ def parse_args() -> argparse.Namespace:
         "--url",
         required=True,
         help="Source file URL, e.g. https://.../ILSVRC2012_img_train.tar",
+    )
+    parser.add_argument(
+        "--output_dir",
+        required=False,
+        default="",
+        help="Output directory, e.g. /home/zz/zheng/Unpaired-Multimodal-Learning/data",
     )
     return parser.parse_args()
 
@@ -77,11 +81,12 @@ def render_progress(
     sys.stdout.flush()
 
 
-def download_to_fixed_dir(url: str) -> Path:
+def download_to_fixed_dir(url: str, output_dir: str) -> Path:
     """Download URL content into the fixed project data directory."""
     filename = infer_filename(url)
-    TARGET_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = TARGET_DIR / filename
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
 
     print(f"Downloading from: {url}")
     print(f"Saving to: {output_path}")
@@ -109,9 +114,8 @@ def download_to_fixed_dir(url: str) -> Path:
 def main() -> None:
     """Program entrypoint."""
     args = parse_args()
-    output_path = download_to_fixed_dir(args.url)
+    output_path = download_to_fixed_dir(args.url, args.output_dir)
     print(f"Downloaded: {output_path}")
-
 
 if __name__ == "__main__":
     main()

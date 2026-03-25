@@ -22,16 +22,22 @@ def _prefix(stats: Dict[str, torch.Tensor], prefix: str) -> Dict[str, torch.Tens
     return {f"{prefix}.{k}": v for k, v in stats.items()}
 
 
-def build_common_mask(
+def build_common_ids(
     named_params: List[Tuple[str, torch.nn.Parameter]],
     common_param_filter: Callable[[str], bool],
 ) -> torch.Tensor:
-    parts = []
+    col_ids = []
+    offset = 0
     for name, p in named_params:
         if not p.requires_grad:
             continue
-        parts.append(torch.full((p.numel(),), bool(common_param_filter(name)), dtype=torch.bool))
-    return torch.cat(parts, dim=0) if parts else torch.empty(0, dtype=torch.bool)
+
+        n = p.numel()
+        if bool(common_param_filter(name)):
+            col_ids.append(torch.arange(offset, offset + n, dtype=torch.long))
+        offset += n
+
+    return torch.cat(col_ids, dim=0) if col_ids else torch.empty(0, dtype=torch.long)
 
 
 def _safe_norm(x: torch.Tensor, eps: float) -> torch.Tensor:
@@ -346,7 +352,7 @@ class CommonGpopEditor:
         self.cfg = cfg or CommonGpopConfig()
         self.cfg.validate()
 
-        self._common_mask_cpu = build_common_mask(named_params, common_param_filter)
+        self._common_ids_cpu = build_common_ids(named_params, common_param_filter)
         self.state = CommonGpopState(
             ema_beta=float(self.cfg.ema_beta),
             gpop_keys=self.cfg.gpop_keys,
@@ -378,19 +384,19 @@ class CommonGpopEditor:
 
         if gpop_weights is not None:
             gpop_weights = gpop_weights.to(device=device, dtype=dtype)
-        cmask = self._common_mask_cpu.to(device=device)
+        col_ids = self._common_ids_cpu.to(device=device)
 
         base_stats = {
             "enabled": 1.0,
             "num_tasks": float(G.shape[0]),
             "num_params": float(G.shape[1]),
-            "num_common": float(cmask.sum().item()) if cmask.numel() > 0 else 0.0,
+            "num_common": float(col_ids.numel()),
         }
 
-        if cmask.numel() == 0 or int(cmask.sum().item()) == 0:
+        if col_ids.numel() == 0:
             raise RuntimeError("[gpop] no common dimensions but enabled gpop surgery")
 
-        G_common = G[:, cmask]   # [T, Pc]
+        G_common = G.index_select(1, col_ids)   # [T, Pc]
         
         # current batch -> state cache
         self.state.build_current(
@@ -427,8 +433,9 @@ class CommonGpopEditor:
 
         # edit all current tasks on common dims
         G_cur_new, edit_stats = self._edit_common(G_cur, g_ref)
-        G_total_new = G.clone()
-        G_total_new[self.state.cur_src_ids, cmask] = G_cur_new
+        
+        # update G in place
+        G[self.state.cur_src_ids[:, None], col_ids[None, :]] = G_cur_new   # [T, Pc]
         
         # update EMA after edit decision; state cache keeps current matched rows
         self.state.update_ema()
@@ -437,7 +444,7 @@ class CommonGpopEditor:
         stats["warmup"] = torch.tensor(0.0, device=device, dtype=dtype)
         stats["matched_tasks"] = torch.tensor(float(G_cur.shape[0]), device=device, dtype=dtype)
         stats.update(_prefix(edit_stats, "edit"))
-        return G_total_new, _prefix(stats, "gpop")
+        return G, _prefix(stats, "gpop")
 
     @torch.no_grad()
     def _edit_common(self, G_cur: torch.Tensor, g_ref: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:

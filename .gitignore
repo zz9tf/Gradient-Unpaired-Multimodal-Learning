@@ -42,9 +42,6 @@ wandb/
 # Local datasets and large downloads (do not commit)
 /data/
 
-# MultiBench run outputs
-/MultiBench/exp/
-
 # Model checkpoints and large binaries (adjust if you need to version small files)
 *.pt
 *.pth
@@ -63,3 +60,4 @@ torch_hub/
 
 # Note: Removed overly broad `**/scripts/` — use a project-specific path if needed.
 data
+*results*

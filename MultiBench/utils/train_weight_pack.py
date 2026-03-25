@@ -80,14 +80,14 @@ def build_train_weight_pack(gpop_weights: str, modality: str) -> TrainWeightPack
     if modality == "x":
         return TrainWeightPack(
             task_keys=("loss_x",),
-            task_weights_cpu=torch.tensor([1.0], dtype=torch.float32),
-            gpop_schema_weights_cpu=torch.tensor([gpop_loss_weight["loss_x"], 0.0], dtype=torch.float32),
+            task_weights_cpu=torch.tensor([1.0, 0.0], dtype=torch.float32),
+            gpop_schema_weights_cpu=torch.tensor([1.0, 0.0], dtype=torch.float32),
         )
     elif modality == "y":
         return TrainWeightPack(
             task_keys=("loss_y",),
-            task_weights_cpu=torch.tensor([1.0], dtype=torch.float32),
-            gpop_schema_weights_cpu=torch.tensor([gpop_loss_weight["loss_y"]], dtype=torch.float32),
+            task_weights_cpu=torch.tensor([1.0, 0.0], dtype=torch.float32),
+            gpop_schema_weights_cpu=torch.tensor([0.0, 1.0], dtype=torch.float32),
         )
     elif modality == "xy":
         return TrainWeightPack(

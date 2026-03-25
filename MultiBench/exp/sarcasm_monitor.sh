@@ -1,5 +1,6 @@
 #!/bin/bash
-source /home/zz/miniconda3/etc/profile.d/conda.sh
+# source /home/zz/miniconda3/etc/profile.d/conda.sh
+source /home/zheng/zheng/miniconda3/etc/profile.d/conda.sh
 conda activate uml
 
 GPU_ID=$1
@@ -13,7 +14,7 @@ n_seeds=3
 pos_embd_list=(true)
 pos_learnable_list=(true)
 
-cd /home/zz/zheng/Unpaired-Multimodal-Learning/MultiBench || exit 1
+cd /home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench || exit 1
 
 export CUDA_VISIBLE_DEVICES=$GPU_ID
 for modality in "${modality_list[@]}"; do

@@ -15,9 +15,9 @@ pos_embd_list=(true false)
 pos_learnable_list=(true false)
 beta_list=(0.9)
 gpop_weight=(
-  "loss_x=0.0,loss_y=1.0"
-  "loss_x=0.1,loss_y=0.9"
-  "loss_x=0.2,loss_y=0.8"
+  "loss_x=0.6,loss_y=0.4"
+  "loss_x=0.7,loss_y=0.3"
+  "loss_x=0.8,loss_y=0.2"
 )
 
 cd /home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench || exit 1

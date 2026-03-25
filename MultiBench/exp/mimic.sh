@@ -3,7 +3,7 @@ source /home/zz/miniconda3/etc/profile.d/conda.sh
 conda activate uml
 
 GPU_ID=$1
-dataset="mosi"
+dataset="mimic"
 modality="xy"
 lr="1e-4"
 zdim_list=(40 300)
@@ -29,7 +29,7 @@ for zdim in "${zdim_list[@]}"; do
           --num_epochs "$num_epochs"
           --step_k "$step_k"
           --n_seeds "$n_seeds"
-          --results_dir "./results/mosi"
+          --results_dir "./results/mimic"
         )
 
         if [ "$pos_embd" = "true" ]; then

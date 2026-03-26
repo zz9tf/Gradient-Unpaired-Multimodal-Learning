@@ -63,7 +63,7 @@ for dataset in "${dataset_list[@]}"; do
                 --step_k "$step_k"
                 --n_seeds "$n_seeds"
                 --train_jsonl
-                --results_dir "./gpop_results"
+                --results_dir "./gpop_$dataset"
                 --gpop_monitor
                 --gpop_monitor_beta "$beta"
                 --gpop_monitor_enable_common_block

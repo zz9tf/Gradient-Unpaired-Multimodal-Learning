@@ -114,7 +114,8 @@ parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--zdim', type=int, default=10)
 parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--n_seeds', type=int, default=1)
-parser.add_argument('--ds_name', type=str, default='mosi')
+parser.add_argument('--dataset1', type=str, default='mosi')
+parser.add_argument('--dataset2', type=str, default='mosi')
 parser.add_argument('--step_k', type=int, default=-1)
 parser.add_argument('--pos_embd', action='store_true')
 parser.add_argument('--pos_learnable', action='store_true')
@@ -146,11 +147,113 @@ parser.add_argument('--show_layers', action='store_true', help='Print model.name
 parser.add_argument('--augment', action='store_true', help='Compatibility flag; currently unused')
 
 
+def build_dataset_loaders(dataset_name: str):
+    """
+    Build train/eval loaders and metadata for a given dataset name.
+
+    Args:
+        dataset_name: Dataset key. Supported values: mosi, sarcasm, humor, mimic, mosei.
+
+    Returns:
+        A dict with keys:
+            - batch_size: int
+            - indims: list[int] with [xdim, ydim]
+            - train_loader: train dataloader
+            - eval_train_loader: eval-train dataloader
+            - eval_valid_loader: eval-validation dataloader
+            - eval_test_loader: eval-test dataloader
+    """
+    if dataset_name == 'mosi':
+        batch_size = 32
+        indims = [20, 300]
+        train_loader, *_ = get_dataloader(
+            './data_files/mosi_data.pkl',
+            robust_test=False,
+            batch_size=batch_size,
+            train_shuffle=True,
+        )
+        eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader(
+            './data_files/mosi_data.pkl',
+            robust_test=False,
+            batch_size=batch_size,
+            train_shuffle=False,
+        )
+    elif dataset_name == 'sarcasm':
+        batch_size = 128
+        indims = [371, 300]
+        train_loader, *_ = get_dataloader(
+            './data_files/sarcasm.pkl',
+            batch_size=batch_size,
+            data_type='sarcasm',
+            vision_norm=True,
+        )
+        eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader(
+            './data_files/sarcasm.pkl',
+            batch_size=batch_size,
+            data_type='sarcasm',
+            train_shuffle=False,
+            vision_norm=True,
+        )
+    elif dataset_name == 'humor':
+        batch_size = 128
+        indims = [371, 300]
+        train_loader, *_ = get_dataloader(
+            './data_files/humor.pkl',
+            batch_size=batch_size,
+            data_type='humor',
+        )
+        eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader(
+            './data_files/humor.pkl',
+            batch_size=batch_size,
+            data_type='humor',
+            train_shuffle=False,
+        )
+    elif dataset_name == 'mimic':
+        from datasets.mimic.get_data import get_dataloader as get_mimic_dataloader
+        batch_size = 128
+        indims = [5, 12]
+        train_loader, *_ = get_mimic_dataloader(7, batch_size=batch_size, imputed_path='./data_files/im.pk')
+        eval_train_loader, eval_valid_loader, eval_test_loader = get_mimic_dataloader(
+            7,
+            imputed_path='./data_files/im.pk',
+            train_shuffle=False,
+        )
+        eval_test_loader = eval_valid_loader  # as per FACTOR-CL codebase
+    elif dataset_name == 'mosei':
+        batch_size = 32
+        indims = [35, 300]
+        train_loader, *_ = get_dataloader(
+            './data_files/mosei_senti_data.pkl',
+            robust_test=False,
+            batch_size=batch_size,
+            data_type='mosei',
+            train_shuffle=True,
+        )
+        eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader(
+            './data_files/mosei_senti_data.pkl',
+            robust_test=False,
+            batch_size=batch_size,
+            data_type='mosei',
+            train_shuffle=False,
+        )
+    else:
+        raise NotImplementedError(f'Dataset not implemented yet: {dataset_name}')
+
+    return {
+        'batch_size': batch_size,
+        'indims': indims,
+        'train_loader': train_loader,
+        'eval_train_loader': eval_train_loader,
+        'eval_valid_loader': eval_valid_loader,
+        'eval_test_loader': eval_test_loader,
+    }
+
+
 def main(args):
     log_dir = args.log_dir
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     fname = (
-        f"log_{timestamp}_{args.run_name}{args.ds_name}_mod{args.modality}"
+        f"log_{timestamp}_{args.run_name}{args.dataset1}_{args.dataset2}_mod{args.modality}"
         f"_zdim{args.zdim}_epochs{args.num_epochs}_pos_embd_{args.pos_embd}"
         f"_learnable_{args.pos_learnable}_step_k{args.step_k}_n_seeds{args.n_seeds}"
     )
@@ -174,49 +277,19 @@ def main(args):
         os.makedirs(seed_dir, exist_ok=True)
         print(f"[MultiBench] Seed {seed} outputs -> {seed_dir}")
         set_seed(seed)
-        if args.ds_name == 'mosi':
-            batch_size=32
-            indims = [20, 300]
-            # Sample two train loaders to shuffle x-only and y-only data within each dataloader
-            train_loader, *_ = get_dataloader('./data_files/mosi_data.pkl', robust_test=False, batch_size=batch_size, train_shuffle=True)
-            train_loader_2, *_ = get_dataloader('./data_files/mosi_data.pkl', robust_test=False, batch_size=batch_size, train_shuffle=True)
-            eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader('./data_files/mosi_data.pkl', robust_test=False, batch_size=batch_size, train_shuffle=False)
-
-        elif args.ds_name == 'sarcasm':
-            batch_size=128
-            indims = [371, 300]
-            train_loader, *_ = get_dataloader('./data_files/sarcasm.pkl', batch_size=batch_size, data_type='sarcasm', vision_norm=True)
-            train_loader_2, *_ = get_dataloader('./data_files/sarcasm.pkl', batch_size=batch_size, data_type='sarcasm', vision_norm=True)
-            eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader('./data_files/sarcasm.pkl', batch_size=batch_size, data_type='sarcasm', train_shuffle=False, vision_norm=True)
-            
-
-        elif args.ds_name == 'humor':
-            batch_size=128
-            indims = [371, 300]
-            train_loader, *_ = get_dataloader('./data_files/humor.pkl', batch_size=batch_size, data_type='humor')
-            train_loader_2, *_ = get_dataloader('./data_files/humor.pkl', batch_size=batch_size, data_type='humor')
-            eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader('./data_files/humor.pkl', batch_size=batch_size, data_type='humor', train_shuffle=False)
-            
-        elif args.ds_name == 'mimic':
-            from datasets.mimic.get_data import get_dataloader as get_mimic_dataloader
-            batch_size = 128
-            indims = [5, 12]
-            train_loader, *_ = get_mimic_dataloader(7, batch_size=batch_size, imputed_path='./data_files/im.pk')
-            train_loader_2, *_ = get_mimic_dataloader(7, batch_size=batch_size, imputed_path='./data_files/im.pk')
-            eval_train_loader, eval_valid_loader, eval_test_loader = get_mimic_dataloader(7, imputed_path='./data_files/im.pk', train_shuffle=False)        
-            eval_test_loader = eval_valid_loader # as per FACTOR-CL codebase
-        
-        elif args.ds_name == 'mosei':
-            batch_size=32
-            indims = [35, 300]
-            train_loader, *_ = get_dataloader('./data_files/mosei_senti_data.pkl', robust_test=False, batch_size=batch_size, data_type='mosei', train_shuffle=True)
-            train_loader_2, *_ = get_dataloader('./data_files/mosei_senti_data.pkl', robust_test=False, batch_size=batch_size, data_type='mosei', train_shuffle=True)
-            eval_train_loader, eval_valid_loader, eval_test_loader = get_dataloader('./data_files/mosei_senti_data.pkl', robust_test=False, batch_size=batch_size, data_type='mosei', train_shuffle=False)
-        else:
-            raise NotImplementedError('Dataset not implemented yet')
+        dataset1_bundle = build_dataset_loaders(args.dataset1)
+        dataset2_bundle = build_dataset_loaders(args.dataset2)
+        train_loader = dataset1_bundle['train_loader']
+        batch_size = dataset2_bundle['batch_size']
+        indims = dataset2_bundle['indims']
+        train_loader_2 = dataset2_bundle['train_loader']
+        eval_train_loader = dataset2_bundle['eval_train_loader']
+        eval_valid_loader = dataset2_bundle['eval_valid_loader']
+        eval_test_loader = dataset2_bundle['eval_test_loader']
 
         # Dataset stats
-        print("Dataset: ", args.ds_name)
+        print("Dataset1: ", args.dataset1)
+        print("Dataset2: ", args.dataset2)
         print("Batch size: ", batch_size)
         print("Train dataset: ", len(train_loader))
         print("Eval train dataset: ", len(eval_train_loader))
@@ -328,7 +401,7 @@ def main(args):
             optimizer,
             num_epoch=args.num_epochs,
             step_k=args.step_k,
-            ds_name=args.ds_name,
+            ds_name=args.dataset2,
             eval_config={'train': eval_train_loader, 'val': eval_valid_loader, 'test': eval_test_loader, 'freq': 100},
             augment=args.augment,
             debug=args.debug,
@@ -343,7 +416,7 @@ def main(args):
             latest_model_path,
             model,
             modality=args.modality,
-            ds_name=args.ds_name,
+            ds_name=args.dataset2,
         )
         print(f"[MultiBench] Saved latest checkpoint to {latest_model_path}")
 

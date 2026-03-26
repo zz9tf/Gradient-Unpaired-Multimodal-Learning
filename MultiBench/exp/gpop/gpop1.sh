@@ -33,7 +33,8 @@ for dataset in "${dataset_list[@]}"; do
             for gw in "${gpop_weight_list[@]}"; do
               cmd=(
                 python main.py -d
-                --ds_name "$dataset"
+                --dataset1 "$dataset"
+                --dataset2 "$dataset"
                 --modality "$modality"
                 --lr "$lr"
                 --zdim "$zdim"
@@ -41,7 +42,7 @@ for dataset in "${dataset_list[@]}"; do
                 --step_k "$step_k"
                 --n_seeds "$n_seeds"
                 --train_jsonl
-                --results_dir "./gpop_$dataset"
+                --results_dir "./results/gpop_$dataset"
                 --gpop_monitor
                 --gpop_monitor_beta "$beta"
                 --gpop_monitor_enable_common_block

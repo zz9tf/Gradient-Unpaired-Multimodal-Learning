@@ -22,7 +22,8 @@ for zdim in "${zdim_list[@]}"; do
       for pos_learnable in "${pos_learnable_list[@]}"; do
         cmd=(
           python main.py -d
-          --ds_name "$dataset"
+          --dataset1 "$dataset"
+          --dataset2 "$dataset"
           --modality "$modality"
           --lr "$lr"
           --zdim "$zdim"
@@ -30,6 +31,7 @@ for zdim in "${zdim_list[@]}"; do
           --step_k "$step_k"
           --n_seeds "$n_seeds"
           --results_dir "./results/mimic"
+          --train_jsonl
         )
 
         if [ "$pos_embd" = "true" ]; then

@@ -24,13 +24,15 @@ for modality in "${modality_list[@]}"; do
         for pos_learnable in "${pos_learnable_list[@]}"; do
           cmd=(
             python main.py -d
-            --ds_name "$dataset"
+            --dataset1 "$dataset"
+            --dataset2 "$dataset"
             --modality "$modality"
             --lr "$lr"
             --zdim "$zdim"
             --num_epochs "$num_epochs"
             --step_k "$step_k"
             --n_seeds "$n_seeds"
+            --results_dir "./results/monitor_sarcasm"
             --train_jsonl
             --gpop_monitor
             --gpop_monitor_beta 0.9

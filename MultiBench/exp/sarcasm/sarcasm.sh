@@ -8,7 +8,7 @@ modality_list=("xy" "x" "y")
 lr="1e-4"
 zdim_list=(40 300)
 num_epochs=30
-step_k_list=(-1 15 20)
+step_k_list=(-1 10 20)
 n_seeds=3
 pos_embd_list=(true false)
 pos_learnable_list=(true false)
@@ -23,7 +23,8 @@ for modality in "${modality_list[@]}"; do
         for pos_learnable in "${pos_learnable_list[@]}"; do
           cmd=(
             python main.py -d
-            --ds_name "$dataset"
+            --dataset1 "$dataset"
+            --dataset2 "$dataset"
             --modality "$modality"
             --lr "$lr"
             --zdim "$zdim"
@@ -31,6 +32,7 @@ for modality in "${modality_list[@]}"; do
             --step_k "$step_k"
             --n_seeds "$n_seeds"
             --train_jsonl
+            --results_dir "./results/sarcasm"
           )
 
           if [ "$pos_embd" = "true" ]; then

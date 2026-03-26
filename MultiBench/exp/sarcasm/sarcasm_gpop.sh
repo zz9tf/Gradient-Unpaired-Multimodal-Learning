@@ -35,7 +35,8 @@ export CUDA_VISIBLE_DEVICES=$GPU_ID
 for gpop_weight in "${gpop_weight[@]}"; do
   cmd=(
     python main.py -d
-    --ds_name sarcasm
+    --dataset1 sarcasm
+    --dataset2 sarcasm
     --modality "$modality"
     --lr 1e-4
     --zdim 300
@@ -43,7 +44,7 @@ for gpop_weight in "${gpop_weight[@]}"; do
     --step_k 15
     --n_seeds 3
     --train_jsonl
-    --results_dir "./gpop_results"
+    --results_dir "./results/gpop_sarcasm"
     --gpop_monitor
     --gpop_monitor_beta 0.9
     --gpop_monitor_enable_common_block

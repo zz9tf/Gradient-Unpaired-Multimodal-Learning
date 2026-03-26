@@ -311,7 +311,7 @@ def train(
     score = None
     best_val = float("-inf")
     best_saved = False
-    steps_per_epoch = min(len(train_loader_1), len(train_loader_2))
+    steps_per_epoch = max(len(train_loader_1), len(train_loader_2))
 
     for _iter in range(num_epoch):
         is_warmup = False
@@ -321,31 +321,66 @@ def train(
             )
             is_warmup = True
 
-        for i_batch, (data_batch_1, data_batch_2) in enumerate(zip(train_loader_1, train_loader_2)):
+        loader_1_iter = iter(train_loader_1)
+        loader_2_iter = iter(train_loader_2)
+        for i_batch in range(steps_per_epoch):
+            data_batch_1 = None
+            data_batch_2 = None
+            try:
+                data_batch_1 = next(loader_1_iter)
+            except StopIteration:
+                data_batch_1 = None
+            try:
+                data_batch_2 = next(loader_2_iter)
+            except StopIteration:
+                data_batch_2 = None
+
+            if data_batch_1 is None and data_batch_2 is None:
+                continue
             global_step += 1
             x1_batch = None
+            x2_batch = None
             if ds_name != "mimic":
-                if not is_warmup:
+                if (not is_warmup) and (data_batch_1 is not None):
                     x1_batch = data_batch_1[0][modalities[0]].float().cuda()
-                x2_batch = data_batch_2[0][modalities[1]].float().cuda()
+                if data_batch_2 is not None:
+                    x2_batch = data_batch_2[0][modalities[1]].float().cuda()
             else:
-                if not is_warmup:
+                if (not is_warmup) and (data_batch_1 is not None):
                     x1_batch = data_batch_1[0].float().cuda()
-                x2_batch = data_batch_2[1].float().cuda()
+                if data_batch_2 is not None:
+                    x2_batch = data_batch_2[1].float().cuda()
+
+            if x1_batch is None and x2_batch is None:
+                continue
 
             out_loss = model(x1_batch, x2_batch)
             loss_x, loss_y = out_loss["loss_x"], out_loss["loss_y"]
             lr_now = float(optimizer.param_groups[0]["lr"])
             optimizer.zero_grad()
             last_stats = None
-            loss = loss_x + loss_y
+            has_loss_x = x1_batch is not None
+            has_loss_y = x2_batch is not None
+            if has_loss_x and has_loss_y:
+                loss = loss_x + loss_y
+            elif has_loss_x:
+                loss = loss_x
+            else:
+                loss = loss_y
             if grad_wrapper is None:
                 loss.backward()
             else:
+                losses = {}
                 if is_warmup:
-                    losses = {"loss_y": loss_y}
+                    if has_loss_y:
+                        losses["loss_y"] = loss_y
                 else:
-                    losses = {"loss_x": loss_x, "loss_y": loss_y}
+                    if has_loss_x:
+                        losses["loss_x"] = loss_x
+                    if has_loss_y:
+                        losses["loss_y"] = loss_y
+                if not losses:
+                    continue
 
                 last_stats = grad_wrapper.backward(
                     losses=losses,
@@ -413,7 +448,6 @@ def train(
                             modality=train_mode,
                             ds_name=ds_name,
                         )
-                        best_saved = True
                         print(
                             f"[MultiBench] best val ({train_mode})={vm:.6f} -> saved {best_model_path}"
                         )

@@ -5,6 +5,7 @@ from matplotlib.patches import Rectangle
 import pandas as pd
 import re
 from pathlib import Path
+import argparse
 
 def plot_gpop_with_baseline(df, metric_col, title=None, save_path=None):
     """
@@ -145,7 +146,13 @@ def build_df(md_path: Path) -> pd.DataFrame:
         df[c + '_std'] = vals.str[1]
     return df
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--md_path", type=str, required=True)
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    df = build_df(Path("/home/zz/zheng/Unpaired-Multimodal-Learning/MultiBench/results/freeze/try/summary.md"))
+    args = parse_args()
+    df = build_df(Path(args.md_path))
 
     plot_gpop_with_baseline(df, "score_y_mean", title="gpop_plot")

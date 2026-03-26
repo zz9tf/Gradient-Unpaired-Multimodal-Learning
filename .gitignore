@@ -61,3 +61,5 @@ torch_hub/
 # Note: Removed overly broad `**/scripts/` — use a project-specific path if needed.
 data
 *results*
+# Ignore any directory named gpop_*
+**/gpop_*/

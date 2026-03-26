@@ -103,8 +103,9 @@ class GradientBlockState:
         self.pb = sum(e - s for s, e in self.slices)
         self.tb = len(self.keys)
 
-        self.prev_gpop = None
-        self.gpop = None
+        self.prev_gpop = torch.zeros(0, self.pb, device=ref_device, dtype=ref_dtype)
+        self.gpop = torch.zeros(self.tb, self.pb, device=ref_device, dtype=ref_dtype)
+        self.activated_rows = torch.zeros(self.tb, device=ref_device, dtype=torch.bool)   # [tb] bool
 
         self.g = torch.zeros(0, self.pb, device=ref_device, dtype=ref_dtype)
         self.current_keys: List[str] = []
@@ -145,15 +146,13 @@ class GradientBlockState:
         if len(self.current_keys) == 0:
             return
 
-        if self.gpop is None:
-            self.gpop = torch.zeros(self.tb, self.pb, device=self.ref_device, dtype=self.ref_dtype)
-            for i, loss_key in enumerate(self.current_keys):
-                row = self.key_to_row[loss_key]
+        for i, loss_key in enumerate(self.current_keys):
+            row = self.key_to_row[loss_key]
+            if not self.activated_rows[row]:
                 self.gpop[row] = self.g[i].detach()
-        else:
-            beta = float(self.cfg.gpop_beta)
-            for i, loss_key in enumerate(self.current_keys):
-                row = self.key_to_row[loss_key]
+                self.activated_rows[row] = True
+            else:
+                beta = float(self.cfg.gpop_beta)
                 src = self.g[i].detach()
                 self.gpop[row] = beta * self.gpop[row] + (1.0 - beta) * src
 
@@ -167,6 +166,9 @@ class GradientBlockState:
 
         for loss_key in self.keys:
             row = self.key_to_row[loss_key]
+            if not self.activated_rows[row]:
+                continue
+                
             p = self.gpop[row]
             p_prev = self.prev_gpop[row]
 

@@ -3,8 +3,8 @@ source /home/zz/miniconda3/etc/profile.d/conda.sh
 conda activate uml
 
 GPU_ID=$1
-dataset1_list=("sarcasm" "humor" "mosei" "mosi")
-dataset2_list=("sarcasm" "humor" "mosei" "mosi")
+dataset1_list=("humor" "mosei" "mosi")
+dataset2_list=("sarcasm")
 modality_list=("xy" "x" "y")
 lr="1e-4"
 zdim_list=(40 300)

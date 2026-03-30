@@ -145,9 +145,44 @@ parser.add_argument('--gpop_weights', type=str, default="loss_x=1.0,loss_y=1.0",
 
 parser.add_argument('--show_layers', action='store_true', help='Print model.named_modules() and pause for manual inspection')
 parser.add_argument('--augment', action='store_true', help='Compatibility flag; currently unused')
+parser.add_argument('--eval_freq', type=int, default=100, help='Run linear-probe evaluate every this many train batches')
 
 
-def build_dataset_loaders(dataset_name: str):
+def build_config(dataset1_bundle: dict, dataset2_bundle: dict, eval_freq: int) -> list:
+    """
+    Build ``eval_config`` for ``train.evaluate`` / ``train.train`` (matches train._normalize_eval_config).
+
+    Each split maps to ``[loader_dataset1_branch, loader_dataset2_branch]`` (unpaired eval loaders).
+
+    Args:
+        dataset1_bundle: Output of ``build_dataset_loaders`` for branch 1 (x).
+        dataset2_bundle: Output of ``build_dataset_loaders`` for branch 2 (y).
+        eval_freq: In-training evaluation stride in batches.
+
+    Returns:
+        List of dicts with keys ``modality``, ``ds_name``, ``train``, ``val``, ``test``, ``freq``.
+    """
+    return [
+        {
+            "modality": "x",
+            "ds_name": dataset1_bundle["ds_name"],
+            "train":dataset1_bundle["eval_train_loader"],
+            "val": dataset1_bundle["eval_valid_loader"],
+            "test": dataset1_bundle["eval_test_loader"],
+            "freq": int(eval_freq),
+        },
+        {
+            "modality": "y",
+            "ds_name": dataset2_bundle["ds_name"],
+            "train":dataset2_bundle["eval_train_loader"],
+            "val": dataset2_bundle["eval_valid_loader"],
+            "test": dataset2_bundle["eval_test_loader"],
+            "freq": int(eval_freq),
+        }
+    ]
+
+
+def build_dataset_loaders(dataset_name: str) -> dict:
     """
     Build train/eval loaders and metadata for a given dataset name.
 
@@ -156,6 +191,7 @@ def build_dataset_loaders(dataset_name: str):
 
     Returns:
         A dict with keys:
+            - ds_name: str
             - batch_size: int
             - indims: list[int] with [xdim, ydim]
             - train_loader: train dataloader
@@ -240,6 +276,7 @@ def build_dataset_loaders(dataset_name: str):
         raise NotImplementedError(f'Dataset not implemented yet: {dataset_name}')
 
     return {
+        'ds_name': dataset_name,
         'batch_size': batch_size,
         'indims': indims,
         'train_loader': train_loader,
@@ -271,7 +308,7 @@ def main(args):
     print("Parsed arguments:", args)
 
     seeds = [i for i in range(args.n_seeds)]
-    outs = {'score_x': [], 'score_y': [], 'score_xy': [], 'val_score_x': [], 'val_score_y': [], 'val_score_xy': []}
+    outs = {'score_x': [], 'score_y': [], 'val_score_x': [], 'val_score_y': []}
     for seed in seeds:
         seed_dir = os.path.join(results_dir, f"seed_{seed}")
         os.makedirs(seed_dir, exist_ok=True)
@@ -279,29 +316,29 @@ def main(args):
         set_seed(seed)
         dataset1_bundle = build_dataset_loaders(args.dataset1)
         dataset2_bundle = build_dataset_loaders(args.dataset2)
-        train_loader = dataset1_bundle['train_loader']
-        batch_size = dataset2_bundle['batch_size']
-        indims = dataset2_bundle['indims']
-        train_loader_2 = dataset2_bundle['train_loader']
-        eval_train_loader = dataset2_bundle['eval_train_loader']
-        eval_valid_loader = dataset2_bundle['eval_valid_loader']
-        eval_test_loader = dataset2_bundle['eval_test_loader']
+        train_loader = dataset1_bundle["train_loader"]
+        batch_size = dataset2_bundle["batch_size"]
+        indims1 = dataset1_bundle["indims"]
+        indims2 = dataset2_bundle["indims"]
+        train_loader_2 = dataset2_bundle["train_loader"]
+        config = build_config(dataset1_bundle, dataset2_bundle, args.eval_freq)
 
         # Dataset stats
         print("Dataset1: ", args.dataset1)
         print("Dataset2: ", args.dataset2)
-        print("Batch size: ", batch_size)
+        print("Batch size(ds1): ", dataset1_bundle["batch_size"])
+        print("Batch size(ds2): ", dataset2_bundle["batch_size"])
         print("Train dataset: ", len(train_loader))
-        print("Eval train dataset: ", len(eval_train_loader))
-        print("Eval test dataset: ", len(eval_test_loader))
-        print(f"Modality Info: xdim: {indims[0]}, ydim: {indims[1]}, zdim: {args.zdim}")
+        print("Eval train batches (ds1 / ds2): ", len(dataset1_bundle["eval_train_loader"]), len(dataset2_bundle["eval_train_loader"]))
+        print("Eval test batches (ds1 / ds2): ", len(dataset1_bundle["eval_test_loader"]), len(dataset2_bundle["eval_test_loader"]))
+        print(f"Modality Info: xdim: {indims1[0]}, ydim: {indims2[1]}, zdim: {args.zdim}")
 
 
         # Initialize model and optimizer
-        xproj_in = Linear(indims[0], args.zdim)
-        yproj_in = Linear(indims[1], args.zdim)
+        xproj_in = Linear(indims1[0], args.zdim)
+        yproj_in = Linear(indims2[1], args.zdim)
         shared_encoder = Transformer(args.zdim, args.zdim, nhead=5, num_layers=5, conv1d=True, out_last=False, pos_embd=args.pos_embd, pos_learnable=args.pos_learnable, max_len=128)
-        decoders = [Linear(args.zdim, indims[0]), Linear(args.zdim, indims[1])]
+        decoders = [Linear(args.zdim, indims1[0]), Linear(args.zdim, indims2[1])]
         model = UML(xproj_in, yproj_in, shared_encoder, decoders, modality=args.modality).cuda()
         # TODO: Add Adam optimizer
         optimizer = optim.SGD(model.parameters(), lr=args.lr)
@@ -395,14 +432,11 @@ def main(args):
         score = train(
             model,
             args.modality,
-            train_loader,
-            train_loader_2,
             train_weight_pack,
+            config,
             optimizer,
             num_epoch=args.num_epochs,
             step_k=args.step_k,
-            ds_name=args.dataset2,
-            eval_config={'train': eval_train_loader, 'val': eval_valid_loader, 'test': eval_test_loader, 'freq': 100},
             augment=args.augment,
             debug=args.debug,
             grad_wrapper=grad_wrapper,
@@ -426,10 +460,8 @@ def main(args):
             raise RuntimeError("train() returned no scores; eval_config may be missing or empty.")
         outs['score_x'].append(100*score[0])
         outs['score_y'].append(100*score[1])
-        outs['score_xy'].append(100*score[2])
-        outs['val_score_x'].append(100*score[3])
-        outs['val_score_y'].append(100*score[4])
-        outs['val_score_xy'].append(100*score[5])
+        outs['val_score_x'].append(100*score[2])
+        outs['val_score_y'].append(100*score[3])
 
     print(outs)
     

@@ -28,6 +28,22 @@ from utils.grad_jsonl_log import (
     tensor_stats_to_jsonable,
 )
 
+modalities = {
+    "mosi": [0, 2], # x, y for non-mimic datasets
+    "mosei": [0, 2], # x, y for non-mimic datasets
+    "sarcasm": [0, 2], # x, y for non-mimic datasets
+    "humor": [0, 2], # x, y for non-mimic datasets
+    "mimic": [0, 1], # x, y for mimic dataset
+}
+
+label_indices = {
+    "mosi": 3,
+    "mosei": 3,
+    "sarcasm": 3,
+    "humor": 3,
+    "mimic": 2,
+}
+
 # Set seed
 def set_seed(seed):
     import os
@@ -178,54 +194,47 @@ class UML(nn.Module):
         x = self.xproj_in(x)
         y = self.yproj_in(y)
         return self.encoder(x).mean(dim=1), self.encoder(y).mean(dim=1)
-
-
-def evaluate(model, config, ds_name='mosi'):
-    embds = {'train': {}, 'val': {}, 'test': {}}
-
-    model.eval()
-    if ds_name == 'mimic':
-        for type in ['train', 'val', 'test']:
-            embds[type]['x1'] = np.concatenate([model.get_embedding(data[0].float().cuda(), data[1].float().cuda())[0].detach().cpu().numpy() for data in config[type]])
-            embds[type]['x2'] = np.concatenate([model.get_embedding(data[0].float().cuda(), data[1].float().cuda())[1].detach().cpu().numpy() for data in config[type]])
-            embds[type]['labels'] = np.concatenate([data[2].detach().cpu().numpy() for data in config[type]])
-    else:
-        for type in ['train', 'val', 'test']:
-            embds[type]['x1'] = np.concatenate([model.get_embedding(data[0][0].cuda(), data[0][2].cuda())[0].detach().cpu().numpy() for data in config[type]])
-            embds[type]['x2'] = np.concatenate([model.get_embedding(data[0][0].cuda(), data[0][2].cuda())[1].detach().cpu().numpy() for data in config[type]])
-            embds[type]['labels'] = np.concatenate([data[3].detach().cpu().numpy() for data in config[type]])
-
-    for type in ['train', 'val', 'test']:
-        if ds_name == 'mosi' or ds_name == 'mosei':
-            embds[type]['labels'] = mosi_label(embds[type]['labels'])
-        elif ds_name == 'sarcasm' or ds_name == 'humor':
-            embds[type]['labels'] = sarcasm_label(embds[type]['labels'])
+    
+    def get_embedding_single(self, data, modality: str):
+        data = data.unsqueeze(1).float() if data.ndim == 2 else data
+        if modality == 'x':
+            data = self.xproj_in(data)
+        elif modality == 'y':
+            data = self.yproj_in(data)
         else:
-            raise NotImplementedError('Dataset not implemented yet')
-        
-        embds[type]['labels'] = np.asarray(embds[type]['labels']).reshape(-1).astype(int)
+            raise ValueError(f"Invalid modality: {modality}")
+        return self.encoder(data).mean(dim=1)
 
-    # Train Logistic Classifier on X alone
-    clf = make_pipeline(StandardScaler(with_mean=True, with_std=True), LogisticRegression(max_iter=1000, solver='liblinear')) if ds_name == 'mosi' else LogisticRegression(max_iter=200)
-    clf.fit(embds['train']['x1'], embds['train']['labels'])
-    val_score_x = clf.score(embds['val']['x1'], embds['val']['labels'])
-    score_x = clf.score(embds['test']['x1'], embds['test']['labels'])
+def evaluate_single_modality(model, config):
+    ds_name = config["ds_name"]
+    modality = config["modality"]
+    train_loader = config["train"]
+    val_loader = config["val"]
+    test_loader = config["test"]
     
-    # Train Logistic Classifier on Y alone
-    clf = make_pipeline(StandardScaler(with_mean=True, with_std=True), LogisticRegression(max_iter=1000, solver='liblinear')) if ds_name == 'mosi' else LogisticRegression(max_iter=200)
-    clf.fit(embds['train']['x2'], embds['train']['labels'])
-    val_score_y = clf.score(embds['val']['x2'], embds['val']['labels'])
-    score_y = clf.score(embds['test']['x2'], embds['test']['labels'])
+    modality_idx = modalities[ds_name][0] if modality == 'x' else modalities[ds_name][1]
+    label_idx = label_indices[ds_name]
     
-    # Train Logistic Classifier on XY together
-    train_embeds = np.concatenate([embds['train']['x1'], embds['train']['x2']], axis=1)
-    val_embeds = np.concatenate([embds['val']['x1'], embds['val']['x2']], axis=1)
-    test_embeds = np.concatenate([embds['test']['x1'], embds['test']['x2']], axis=1)
+    embds_train = np.concatenate([model.get_embedding_single(data[0][modality_idx].cuda(non_blocking=True), modality).detach().cpu().numpy() for data in train_loader])
+    embds_val = np.concatenate([model.get_embedding_single(data[0][modality_idx].cuda(non_blocking=True), modality).detach().cpu().numpy() for data in val_loader])
+    embds_test = np.concatenate([model.get_embedding_single(data[0][modality_idx].cuda(non_blocking=True), modality).detach().cpu().numpy() for data in test_loader])
+    
+    labels_train = np.concatenate([data[label_idx].detach().cpu().numpy() for data in train_loader]).reshape(-1).astype(int)
+    labels_val = np.concatenate([data[label_idx].detach().cpu().numpy() for data in val_loader]).reshape(-1).astype(int)
+    labels_test = np.concatenate([data[label_idx].detach().cpu().numpy() for data in test_loader]).reshape(-1).astype(int)
+       
     clf = make_pipeline(StandardScaler(with_mean=True, with_std=True), LogisticRegression(max_iter=1000, solver='liblinear')) if ds_name == 'mosi' else LogisticRegression(max_iter=200)
-    clf.fit(train_embeds, embds['train']['labels'])
-    score_xy = clf.score(test_embeds, embds['test']['labels'])
-    val_score_xy = clf.score(val_embeds, embds['val']['labels'])
-    return score_x, score_y, score_xy, val_score_x, val_score_y, val_score_xy
+    clf.fit(embds_train, labels_train)
+    val_score = clf.score(embds_val, labels_val)
+    test_score = clf.score(embds_test, labels_test)
+    
+    return test_score, val_score
+
+def evaluate(model, config):
+    model.eval()
+    test_score_x, val_score_x = evaluate_single_modality(model, config[0])
+    test_score_y, val_score_y = evaluate_single_modality(model, config[1])
+    return test_score_x, test_score_y, val_score_x, val_score_y
 
 
 def primary_val_metric_for_modality(train_mode: str, score_tuple: Tuple[float, ...]) -> float:
@@ -247,25 +256,21 @@ def primary_val_metric_for_modality(train_mode: str, score_tuple: Tuple[float, .
         ValueError: If ``train_mode`` is not ``x``, ``y``, or ``xy``.
     """
     if train_mode == "x":
-        return float(score_tuple[3])
+        return float(score_tuple[2])
     if train_mode == "y":
-        return float(score_tuple[4])
+        return float(score_tuple[3])
     if train_mode == "xy":
-        return float(score_tuple[5])
+        return float(score_tuple[3])
     raise ValueError(f"train_mode must be one of x, y, xy; got {train_mode!r}")
 
 def train(
     model,
     train_mode,
-    train_loader_1,
-    train_loader_2,
     train_weight_pack,
+    config,
     optimizer,
-    modalities=[0, 2],
     num_epoch=100,
     step_k=30,
-    ds_name="mosi",
-    eval_config=None,
     augment=None,
     debug=False,
     grad_wrapper: Optional[GradWrapper] = None,
@@ -280,38 +285,35 @@ def train(
     Args:
         model: UML instance on CUDA.
         train_mode: 'x', 'y', or 'xy'.
-        train_loader_1: Loader for modality batch 1.
-        train_loader_2: Loader for modality batch 2.
+        config: List of dicts with keys ``modality``, ``ds_name``, ``train``, ``val``, ``test``, ``freq``.
         train_weight_pack: Prebuilt x/y/xy (+ xy warmup) weight specs from ``main`` (CPU tensors).
         optimizer: Torch optimizer.
         modalities: Index pair into batch tensors (non-mimic).
         num_epoch: Epoch count.
         step_k: Warmup epochs for xy mode (y-only when iter <= step_k).
-        ds_name: Dataset name for evaluation.
-        eval_config: Optional dict with train/val/test loaders and eval freq.
         augment: Unused placeholder (kept for API compatibility).
         debug: If True, skip wandb logging.
         grad_wrapper: Optional pre-built GradWrapper with pre/post monitor and gpop injected.
         jsonl_path: Legacy mixed JSONL path (contains both loss and stats in one row).
         loss_jsonl_path: If set, append one JSON line per step for loss-only records.
         stats_jsonl_path: If set, append one JSON line per step for stats-only records.
-        best_model_path: If set and ``eval_config`` is provided, save checkpoint when the
+        best_model_path: If set and ``config`` is provided, save checkpoint when the
             modality-matched validation score improves (artifact only).
 
     Returns:
         Six-tuple from ``evaluate()`` on the **latest model** (end of training) when
-        ``eval_config`` is provided; otherwise last in-training ``evaluate`` tuple if any,
+        ``config`` is provided; otherwise last in-training ``evaluate`` tuple if any,
         or ``None``.
     """
-    if eval_config is None:
-        eval_config = {}
+    if config is None:
+        config = []
 
     model.train()
     global_step = 0
     score = None
     best_val = float("-inf")
-    best_saved = False
-    steps_per_epoch = max(len(train_loader_1), len(train_loader_2))
+    steps_per_epoch = max(len(config[0]["train"]), len(config[1]["train"]))
+    
 
     for _iter in range(num_epoch):
         is_warmup = False
@@ -321,38 +323,28 @@ def train(
             )
             is_warmup = True
 
-        loader_1_iter = iter(train_loader_1)
-        loader_2_iter = iter(train_loader_2)
+        loader_1_iter = iter(config[0]["train"])
+        loader_2_iter = iter(config[1]["train"])
+        
         for i_batch in range(steps_per_epoch):
-            data_batch_1 = None
-            data_batch_2 = None
-            try:
-                data_batch_1 = next(loader_1_iter)
-            except StopIteration:
-                data_batch_1 = None
-            try:
-                data_batch_2 = next(loader_2_iter)
-            except StopIteration:
-                data_batch_2 = None
-
-            if data_batch_1 is None and data_batch_2 is None:
-                continue
-            global_step += 1
             x1_batch = None
             x2_batch = None
-            if ds_name != "mimic":
-                if (not is_warmup) and (data_batch_1 is not None):
-                    x1_batch = data_batch_1[0][modalities[0]].float().cuda()
-                if data_batch_2 is not None:
-                    x2_batch = data_batch_2[0][modalities[1]].float().cuda()
-            else:
-                if (not is_warmup) and (data_batch_1 is not None):
-                    x1_batch = data_batch_1[0].float().cuda()
-                if data_batch_2 is not None:
-                    x2_batch = data_batch_2[1].float().cuda()
-
+            try:
+                data_batch_1 = next(loader_1_iter)[0]
+                modality_idx = modalities[config[0]["ds_name"]][0]
+                x1_batch = data_batch_1[modality_idx].cuda(non_blocking=True)
+            except StopIteration:
+                x1_batch = None
+            try:
+                data_batch_2 = next(loader_2_iter)[0]
+                modality_idx = modalities[config[1]["ds_name"]][1]
+                x2_batch = data_batch_2[modality_idx].cuda(non_blocking=True)
+            except StopIteration:
+                x2_batch = None
             if x1_batch is None and x2_batch is None:
-                continue
+                raise ValueError("No data batches found")
+            
+            global_step += 1
 
             out_loss = model(x1_batch, x2_batch)
             loss_x, loss_y = out_loss["loss_x"], out_loss["loss_y"]
@@ -380,7 +372,7 @@ def train(
                     if has_loss_y:
                         losses["loss_y"] = loss_y
                 if not losses:
-                    continue
+                    raise ValueError("No losses found")
 
                 last_stats = grad_wrapper.backward(
                     losses=losses,
@@ -423,7 +415,7 @@ def train(
                     }
                     append_train_jsonl_row(stats_jsonl_path, stats_row)
 
-            if eval_config and i_batch % eval_config["freq"] == 0:
+            if config and i_batch % config[0]["freq"] == 0:
                 if steps_per_epoch is not None:
                     steps_until_next_epoch_start = int(steps_per_epoch) - (int(i_batch) + 1)
                     print(
@@ -437,7 +429,7 @@ def train(
                         " | next_epoch_total_steps=unknown"
                     )
                 model.eval()
-                score = evaluate(model, eval_config, ds_name)
+                score = evaluate(model, config)
                 if best_model_path is not None:
                     vm = primary_val_metric_for_modality(train_mode, score)
                     if vm > best_val:
@@ -446,7 +438,7 @@ def train(
                             best_model_path,
                             model,
                             modality=train_mode,
-                            ds_name=ds_name,
+                            ds_name=config[1]["ds_name"],
                         )
                         print(
                             f"[MultiBench] best val ({train_mode})={vm:.6f} -> saved {best_model_path}"
@@ -489,9 +481,8 @@ def train(
 
                 model.train()
 
-    if eval_config:
+    if config:
         print("[MultiBench] Final evaluation with latest model parameters.")
-        score = evaluate(model, eval_config, ds_name)
+        score = evaluate(model, config)
     return score
             
-

@@ -443,36 +443,81 @@ def train(
                         print(
                             f"[MultiBench] best val ({train_mode})={vm:.6f} -> saved {best_model_path}"
                         )
-                print(
-                    "iter: ",
-                    _iter,
-                    " i_batch: ",
-                    i_batch,
-                    " loss_x: ",
-                    loss_x.item(),
-                    " loss_y: ",
-                    loss_y.item(),
-                    " loss: ",
-                    loss.item(),
-                    " score_x: ",
-                    score[0],
-                    " score_y: ",
-                    score[1],
-                    " score_xy: ",
-                    score[2],
-                )
+
+                scores = {
+                    "score_x": score[0],
+                    "score_y": score[1],
+                    "val_score_x": score[2],
+                    "val_score_y": score[3],
+                }
+                if has_loss_x and has_loss_y:
+                    # x + y are both available.
+                    print(
+                        "iter: ",
+                        _iter,
+                        " i_batch: ",
+                        i_batch,
+                        " loss_x: ",
+                        loss_x.item(),
+                        " loss_y: ",
+                        loss_y.item(),
+                        " loss: ",
+                        loss.item(),
+                        " score_x: ",
+                        scores["score_x"],
+                        " score_y: ",
+                        scores["score_y"],
+                    )
+                elif has_loss_x and (not has_loss_y):
+                    # Only x-branch is available.
+                    print(
+                        "iter: ",
+                        _iter,
+                        " i_batch: ",
+                        i_batch,
+                        " (x-only) ",
+                        " loss_x: ",
+                        loss_x.item(),
+                        " loss: ",
+                        loss.item(),
+                        " score_x: ",
+                        scores["score_x"],
+                    )
+                elif (not has_loss_x) and has_loss_y:
+                    # Only y-branch is available.
+                    print(
+                        "iter: ",
+                        _iter,
+                        " i_batch: ",
+                        i_batch,
+                        " (y-only) ",
+                        " loss_y: ",
+                        loss_y.item(),
+                        " loss: ",
+                        loss.item(),
+                        " score_y: ",
+                        scores["score_y"],
+                    )
+                else:
+                    raise ValueError("Unexpected state: no losses available (has_loss_x=False, has_loss_y=False).")
+
                 if not debug:
                     log_payload = {
-                        "loss_x": loss_x.item(),
-                        "loss_y": loss_y.item(),
-                        "loss_weighted": loss.item(),
-                        "score_x": score[0],
-                        "score_y": score[1],
-                        "score_xy": score[2],
-                        "val_score_x": score[3],
-                        "val_score_y": score[4],
-                        "val_score_xy": score[5],
+                        "loss_x": float(loss_x.detach().cpu().item()),
+                        "loss_weighted": float(loss.detach().cpu().item()),
                     }
+                    if "score_x" in scores:
+                        log_payload["score_x"] = scores["score_x"]
+                    if "val_score_x" in scores:
+                        log_payload["val_score_x"] = scores["val_score_x"]
+
+                    if has_loss_y:
+                        log_payload["loss_y"] = float(loss_y.detach().cpu().item())
+                        if "score_y" in scores:
+                            log_payload["score_y"] = scores["score_y"]
+                        if "val_score_y" in scores:
+                            log_payload["val_score_y"] = scores["val_score_y"]
+
                     if last_stats is not None:
                         for sk, sv in rename_grad_agg_stats_keys(last_stats).items():
                             if torch.is_tensor(sv) and sv.numel() == 1:

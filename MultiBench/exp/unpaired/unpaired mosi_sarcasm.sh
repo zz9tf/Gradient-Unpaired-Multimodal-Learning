@@ -5,20 +5,14 @@ conda activate uml
 GPU_ID=$1
 dataset1_list=("mosei")
 dataset2_list=("sarcasm")
-# modality_list=("xy" "x" "y")
-modality_list=("xy")
+modality_list=("xy" "x" "y")
 lr="1e-4"
-# zdim_list=(40 300)
-zdim_list=(40)
+zdim_list=(40 300)
 num_epochs=30
-# step_k_list=(-1 10 20)
-# n_seeds=3
-# pos_embd_list=(true false)
-# pos_learnable_list=(true false)
-step_k_list=(-1)
+step_k_list=(-1 10 20)
 n_seeds=3
-pos_embd_list=(false)
-pos_learnable_list=(false)
+pos_embd_list=(true false)
+pos_learnable_list=(true false)
 
 cd /home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench || exit 1
 

@@ -1,5 +1,7 @@
 #!/bin/bash
-source /home/zheng/zheng/miniconda3/etc/profile.d/conda.sh
+# source /home/zheng/zheng/miniconda3/etc/profile.d/conda.sh
+source /home/zz/miniconda3/etc/profile.d/conda.sh
+
 conda activate uml
 
 GPU_ID=$1
@@ -28,7 +30,8 @@ gpop_weight_list=(
   "loss_x=1.0,loss_y=0.0"
 )
 
-cd /home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench || exit 1
+# cd /home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench || exit 1
+cd /home/zz/zheng/Unpaired-Multimodal-Learning/MultiBench || exit 1
 
 export CUDA_VISIBLE_DEVICES=$GPU_ID
 for zdim in "${zdim_list[@]}"; do

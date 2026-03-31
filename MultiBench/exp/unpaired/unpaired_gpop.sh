@@ -49,7 +49,7 @@ for zdim in "${zdim_list[@]}"; do
           --step_k "$step_k"
           --n_seeds "$n_seeds"
           --train_jsonl
-          --results_dir "./results/unpaired_$dataset1_$dataset2_gpop"
+          --results_dir "./results/unpaired_${dataset1}_${dataset2}_gpop"
         )
         "${cmd[@]}"
         for gpop_weight in "${gpop_weight_list[@]}"; do
@@ -66,7 +66,7 @@ for zdim in "${zdim_list[@]}"; do
           --step_k "$step_k"
           --n_seeds "$n_seeds"
           --train_jsonl
-          --results_dir "./results/unpaired_$dataset1_$dataset2_gpop"
+          --results_dir "./results/unpaired_${dataset1}_${dataset2}_gpop"
           --gpop
           --gpop_ref_build_kind "weighted_mean"
           --gpop_ema_beta 0.9
@@ -82,7 +82,6 @@ for zdim in "${zdim_list[@]}"; do
         fi
 
         "${cmd[@]}"
-        exit 0
       done
     done
   done

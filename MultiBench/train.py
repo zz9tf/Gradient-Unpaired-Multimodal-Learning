@@ -152,21 +152,61 @@ class MSE(nn.Module):
 
 # UML model
 class UML(nn.Module):
-    def __init__(self, xproj_in, yproj_in, shared_encoder, decoders, modality='x'):
+    def __init__(self, xproj_in, yproj_in, shared_encoder, decoders, modality='x', x_random_noise=False):
+        """
+        Initialize UML model.
+
+        Args:
+            xproj_in: Input projection for x branch.
+            yproj_in: Input projection for y branch.
+            shared_encoder: Shared sequence encoder.
+            decoders: Decoders for x/y reconstruction.
+            modality: Training modality flag.
+            x_random_noise: If True, replace every x input with random Gaussian noise.
+        """
         super().__init__()
         self.xproj_in = xproj_in
         self.yproj_in = yproj_in
         self.encoder = shared_encoder
         self.decoders = nn.ModuleList(decoders)
         self.modality = modality
+        self.x_random_noise = bool(x_random_noise)
         self.critic = MSE()
         print("Training using MUSE with modality: ", modality)
+        print("x_random_noise: ", self.x_random_noise)
+
+    def _build_random_noise_like(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Build Gaussian noise tensor matching x shape/device/dtype.
+
+        Args:
+            x: Reference tensor.
+
+        Returns:
+            Noise tensor sampled from N(0, 1).
+        """
+        return torch.randn_like(x)
+
+    def _prepare_x_input(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Prepare x input before projection.
+
+        Args:
+            x: Raw x input tensor.
+
+        Returns:
+            Prepared x tensor (optionally replaced by random noise).
+        """
+        x = x.unsqueeze(1).float() if x.ndim == 2 else x
+        if self.x_random_noise:
+            x = self._build_random_noise_like(x)
+        return x
     
     def forward(self, x, y):
         # pool sequence dim of z
         loss_x = loss_y = torch.tensor(0.0)
         if x is not None:
-            x = x.unsqueeze(1).float() if x.ndim == 2 else x
+            x = self._prepare_x_input(x)
             x_proj = self.xproj_in(x)
             zx = self.encoder(x_proj)
             x_recon = self.decoders[0](zx)
@@ -189,14 +229,17 @@ class UML(nn.Module):
         return {'loss_x': loss_x, 'loss_y': loss_y}
 
     def get_embedding(self, x, y):
-        x = x.unsqueeze(1).float() if x.ndim == 2 else x
+        x = self._prepare_x_input(x)
         y = y.unsqueeze(1).float() if y.ndim == 2 else y
         x = self.xproj_in(x)
         y = self.yproj_in(y)
         return self.encoder(x).mean(dim=1), self.encoder(y).mean(dim=1)
     
     def get_embedding_single(self, data, modality: str):
-        data = data.unsqueeze(1).float() if data.ndim == 2 else data
+        if modality == 'x':
+            data = self._prepare_x_input(data)
+        else:
+            data = data.unsqueeze(1).float() if data.ndim == 2 else data
         if modality == 'x':
             data = self.xproj_in(data)
         elif modality == 'y':
@@ -353,23 +396,28 @@ def train(
             last_stats = None
             has_loss_x = x1_batch is not None
             has_loss_y = x2_batch is not None
-            if has_loss_x and has_loss_y:
+            if has_loss_x and has_loss_y and train_mode == "xy":
                 loss = loss_x + loss_y
-            elif has_loss_x:
+            elif has_loss_x and train_mode == "x":
                 loss = loss_x
-            else:
+            elif has_loss_y and train_mode == "y":
                 loss = loss_y
             if grad_wrapper is None:
                 loss.backward()
             else:
                 losses = {}
                 if is_warmup:
-                    if has_loss_y:
+                    if has_loss_y and train_mode == "xy":
                         losses["loss_y"] = loss_y
+                    else:
+                        raise ValueError(f"has_loss_y is {has_loss_y} and train_mode is {train_mode}")
                 else:
-                    if has_loss_x:
+                    if has_loss_x and has_loss_y and train_mode == "xy":
                         losses["loss_x"] = loss_x
-                    if has_loss_y:
+                        losses["loss_y"] = loss_y
+                    elif has_loss_x and train_mode == "x":
+                        losses["loss_x"] = loss_x
+                    elif has_loss_y and train_mode == "y":
                         losses["loss_y"] = loss_y
                 if not losses:
                     raise ValueError("No losses found")

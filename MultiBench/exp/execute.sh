@@ -12,3 +12,11 @@
 # task run "unpaired_mosei_sarcasm" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/unpaired_mosei_sarcasm.sh 1'
 # task run "unpaired_mosi_sarcasm" '/home/zz/zheng/Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/unpaired_mosi_sarcasm.sh 0'
 # task run "unpaired_mosi_sarcasm gpop" '/home/zz/zheng/Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/unpaired_gpop.sh 1'
+# task run "unpaired_mosi_mosei" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/unpaired_mosi_mosei.sh 0'
+# task run "unpaired_mosei_sarcasm" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/unpaired_mosei_sarcasm.sh 1'
+
+# fast gpop
+# task run "unpaired_mosi_mosei_1" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/mosi_mosei/unpaired_mosi_mosei_1.sh 0'
+task run "unpaired_mosei_sarcasm_1" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/mosi_sarcasm/unpaired_mosi_sarcasm_1.sh 1'
+# task run "unpaired_mosi_mosei_2" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/mosi_mosei/unpaired_mosi_mosei_2.sh 2'
+task run "unpaired_mosei_sarcasm_2" '/home/zheng/zheng/Gradient-Unpaired-Multimodal-Learning/MultiBench/exp/unpaired/mosi_sarcasm/unpaired_mosi_sarcasm_2.sh 3'

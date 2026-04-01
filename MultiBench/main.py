@@ -146,6 +146,7 @@ parser.add_argument('--gpop_weights', type=str, default="loss_x=1.0,loss_y=1.0",
 parser.add_argument('--show_layers', action='store_true', help='Print model.named_modules() and pause for manual inspection')
 parser.add_argument('--augment', action='store_true', help='Compatibility flag; currently unused')
 parser.add_argument('--eval_freq', type=int, default=100, help='Run linear-probe evaluate every this many train batches')
+parser.add_argument('--x_random_noise', action='store_true', help='Replace x input with random Gaussian noise in train/eval')
 
 
 def build_config(dataset1_bundle: dict, dataset2_bundle: dict, eval_freq: int) -> list:
@@ -339,7 +340,14 @@ def main(args):
         yproj_in = Linear(indims2[1], args.zdim)
         shared_encoder = Transformer(args.zdim, args.zdim, nhead=5, num_layers=5, conv1d=True, out_last=False, pos_embd=args.pos_embd, pos_learnable=args.pos_learnable, max_len=128)
         decoders = [Linear(args.zdim, indims1[0]), Linear(args.zdim, indims2[1])]
-        model = UML(xproj_in, yproj_in, shared_encoder, decoders, modality=args.modality).cuda()
+        model = UML(
+            xproj_in,
+            yproj_in,
+            shared_encoder,
+            decoders,
+            modality=args.modality,
+            x_random_noise=args.x_random_noise,
+        ).cuda()
         # TODO: Add Adam optimizer
         optimizer = optim.SGD(model.parameters(), lr=args.lr)
         print_train_block_overview(model, train_loader, train_loader_2)

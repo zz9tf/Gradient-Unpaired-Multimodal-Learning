@@ -33,8 +33,10 @@ def build_df(md_path: Path) -> pd.DataFrame:
         df[c] = pd.to_numeric(df[c])
     for c in ['pos_embd', 'learnable']:
         df[c] = df[c].map({'True': True, 'False': False})
-    metric_cols = ['score_x', 'score_xy', 'score_y', 'val_score_x', 'val_score_xy', 'val_score_y']
+    metric_cols = ['score_x', 'score_y', 'val_score_x', 'val_score_y']
     for c in metric_cols:
+        if c not in df.columns:
+            continue
         vals = df[c].apply(split_pm)
         df[c + '_mean'] = vals.str[0]
         df[c + '_std'] = vals.str[1]
@@ -42,20 +44,14 @@ def build_df(md_path: Path) -> pd.DataFrame:
 
 
 def make_heatmap(df: pd.DataFrame, outdir: Path):
-    # First dimension is modality (x/xy/y); metric is unified as test_y accuracy.
+    if 'score_y_mean' not in df.columns:
+        raise ValueError('Missing parsed metric column: score_y_mean')
+    modalities = sorted(df['modality'].dropna().unique().tolist())
     row_specs = [
-        ("x", "score_y_mean", False, False),
-        ("xy", "score_y_mean", False, False),
-        ("y", "score_y_mean", False, False),
-        ("x", "score_y_mean", False, True),
-        ("xy", "score_y_mean", False, True),
-        ("y", "score_y_mean", False, True),
-        ("x", "score_y_mean", True, False),
-        ("xy", "score_y_mean", True, False),
-        ("y", "score_y_mean", True, False),
-        ("x", "score_y_mean", True, True),
-        ("xy", "score_y_mean", True, True),
-        ("y", "score_y_mean", True, True),
+        (modality, "score_y_mean", pos, learn)
+        for pos in [False, True]
+        for learn in [False, True]
+        for modality in modalities
     ]
     zdim_order = sorted(df['zdim'].unique())
     step_order = sorted(df['step_k'].unique(), key=lambda x: (x == -1, x))
@@ -99,8 +95,9 @@ def make_heatmap(df: pd.DataFrame, outdir: Path):
     # add separators between zdim groups and between config groups
     for g in range(1, len(zdim_order)):
         ax.axvline(g * len(step_order) - 0.5, linewidth=2)
-    for r in [3, 6, 9]:
-        ax.axhline(r - 0.5, linewidth=2)
+    rows_per_cfg = len(modalities)
+    for g in range(1, 4):
+        ax.axhline(g * rows_per_cfg - 0.5, linewidth=2)
 
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label('Score')
